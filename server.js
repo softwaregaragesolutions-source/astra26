@@ -59,7 +59,11 @@ let lastCameraTimestamp = null;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.raw({ type: (req) => true, limit: '10mb' })); // Raw body parser for camera binary uploads
+app.use(express.text({ type: ['text/plain', 'text/*'], limit: '10mb' }));
+
+// Raw body parser ONLY for camera frame binary uploads (so standard requests are unaffected)
+app.use(['/api/camera/frame', '/camera/frame', '/api/camera'], express.raw({ type: ['image/*', 'application/octet-stream'], limit: '10mb' }));
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 
@@ -102,9 +106,55 @@ app.get('/api/temperature/history', (req, res) => {
   });
 });
 
-// POST new temperature reading (from ESP32 or HTTP client)
+// Helper to safely extract payload object from body (Buffer, String, or Object) or query params
+function parseRequestBody(req) {
+  let body = req.body;
+  if (!body) body = {};
+
+  if (Buffer.isBuffer(body)) {
+    const str = body.toString('utf8').trim();
+    try {
+      const parsed = JSON.parse(str);
+      if (typeof parsed === 'object' && parsed !== null) body = parsed;
+      else if (typeof parsed === 'number') body = { temperature: parsed };
+      else body = {};
+    } catch (e) {
+      const num = parseFloat(str);
+      if (!isNaN(num)) body = { temperature: num };
+      else body = {};
+    }
+  } else if (typeof body === 'string') {
+    const str = body.trim();
+    try {
+      const parsed = JSON.parse(str);
+      if (typeof parsed === 'object' && parsed !== null) body = parsed;
+      else if (typeof parsed === 'number') body = { temperature: parsed };
+      else body = {};
+    } catch (e) {
+      const num = parseFloat(str);
+      if (!isNaN(num)) body = { temperature: num };
+      else body = {};
+    }
+  }
+
+  if (typeof body !== 'object' || body === null) {
+    body = {};
+  }
+
+  // Fallback to URL query params if body didn't contain temperature
+  if (body.temperature === undefined && body.temp === undefined && body.temp_c === undefined && body.value === undefined) {
+    if (req.query && (req.query.temperature || req.query.temp || req.query.temp_c || req.query.value)) {
+      body = { ...body, ...req.query };
+    }
+  }
+
+  return body;
+}
+
+// POST new telemetry/temperature reading (from ESP32 or HTTP client)
 const handleTemperaturePost = (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.body.api_key;
+  const payload = parseRequestBody(req);
+  const apiKey = req.headers['x-api-key'] || payload.api_key;
   
   // If API_KEY is set in env, enforce authorization check
   if (API_KEY && apiKey !== API_KEY) {
@@ -112,7 +162,7 @@ const handleTemperaturePost = (req, res) => {
   }
 
   // Support flexible field names from ESP32 payload
-  let rawTemp = req.body.temperature ?? req.body.temp ?? req.body.temp_c ?? req.body.value;
+  let rawTemp = payload.temperature ?? payload.temp ?? payload.temp_c ?? payload.value ?? payload.val ?? payload.t;
   
   if (rawTemp === undefined || rawTemp === null || isNaN(Number(rawTemp))) {
     return res.status(400).json({
@@ -123,16 +173,41 @@ const handleTemperaturePost = (req, res) => {
 
   const tempC = parseFloat(Number(rawTemp).toFixed(2));
   const tempF = parseFloat(((tempC * 9) / 5 + 32).toFixed(2));
-  const sensorId = req.body.sensor_id || req.body.device_id || 'DS18B20_ESP32';
-  const timestamp = req.body.timestamp ? new Date(req.body.timestamp).toISOString() : new Date().toISOString();
+  const sensorId = payload.sensor_id || payload.device_id || req.headers['x-sensor-id'] || 'ESP32_MULTI_SENSOR';
+  const timestamp = payload.timestamp ? new Date(payload.timestamp).toISOString() : new Date().toISOString();
+  const rssi = payload.rssi ?? payload.wifi_rssi ?? payload.signal ?? null;
+
+  // Multi-Sensor Fields Extraction: LDR, Voltage, Rain, Tilt
+  const rawLdr = payload.ldr ?? payload.ldr_percent ?? payload.light ?? payload.lux ?? 65;
+  const ldrPercent = Math.max(0, Math.min(100, parseFloat(Number(rawLdr).toFixed(1))));
+
+  const rawVolts = payload.voltage ?? payload.volts ?? payload.v_in ?? payload.v ?? 12.2;
+  const voltage = parseFloat(Number(rawVolts).toFixed(2));
+
+  const rawRain = payload.rain ?? payload.rain_percent ?? payload.rain_level ?? payload.raindrop ?? 0;
+  const rainPercent = Math.max(0, Math.min(100, parseFloat(Number(rawRain).toFixed(1))));
+  const rainDetected = payload.rain_detected !== undefined 
+    ? Boolean(payload.rain_detected) 
+    : (rainPercent > 20 || Boolean(payload.is_raining));
+
+  const tiltDetected = payload.tilt !== undefined 
+    ? Boolean(payload.tilt) 
+    : Boolean(payload.tilt_detected || payload.tilted);
+  const tiltStatus = tiltDetected ? 'Tilted / Motion Alert' : 'Stable';
 
   const record = {
     id: Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
     sensor_id: sensorId,
     temp_c: tempC,
     temp_f: tempF,
+    ldr_percent: ldrPercent,
+    voltage: voltage,
+    rain_percent: rainPercent,
+    rain_detected: rainDetected,
+    tilt_detected: tiltDetected,
+    tilt_status: tiltStatus,
     timestamp: timestamp,
-    wifi_rssi: req.body.rssi || null
+    wifi_rssi: rssi
   };
 
   temperatureHistory.push(record);
@@ -145,17 +220,18 @@ const handleTemperaturePost = (req, res) => {
   // Broadcast to all connected WebSocket clients in real-time
   io.emit('new_reading', record);
 
-  console.log(`[${new Date().toLocaleTimeString()}] Reading received: ${tempC}°C / ${tempF}°F from ${sensorId}`);
+  console.log(`[${new Date().toLocaleTimeString()}] Telemetry received: ${tempC}°C, LDR: ${ldrPercent}%, Volts: ${voltage}V, Rain: ${rainPercent}%, Tilt: ${tiltStatus} from ${sensorId}`);
 
   res.status(201).json({
     success: true,
-    message: 'Temperature recorded successfully',
+    message: 'Telemetry recorded successfully',
     data: record
   });
 };
 
-// Mount route handler on primary and alias endpoints for robust compatibility
+// Mount route handler on primary and alias endpoints for robust compatibility (GET & POST)
 app.post('/api/temperature', handleTemperaturePost);
+app.get('/api/temperature/update', handleTemperaturePost); // GET support for simple ESP32 HTTP GET requests
 app.post('/api/temp', handleTemperaturePost);
 app.post('/temperature', handleTemperaturePost);
 app.post('/update', handleTemperaturePost);
@@ -301,15 +377,28 @@ app.get('/api/camera/stream', (req, res) => {
 
 app.post('/api/simulate', (req, res) => {
   const baseTemp = req.body.baseTemp ? parseFloat(req.body.baseTemp) : 24.5;
-  const variation = (Math.random() - 0.5) * 2.5; // +/- 1.25 degrees
-  const tempC = parseFloat((baseTemp + variation).toFixed(2));
+  const tempVariation = (Math.random() - 0.5) * 2.5;
+  const tempC = parseFloat((baseTemp + tempVariation).toFixed(2));
   const tempF = parseFloat(((tempC * 9) / 5 + 32).toFixed(2));
+
+  const ldrPercent = parseFloat((50 + Math.random() * 40).toFixed(1)); // 50% - 90% light
+  const voltage = parseFloat((11.8 + Math.random() * 1.2).toFixed(2)); // 11.8V - 13.0V
+  const rainPercent = Math.random() > 0.7 ? parseFloat((30 + Math.random() * 60).toFixed(1)) : 0;
+  const rainDetected = rainPercent > 20;
+  const tiltDetected = Math.random() > 0.85;
+  const tiltStatus = tiltDetected ? 'Tilted / Motion Alert' : 'Stable';
 
   const record = {
     id: Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
-    sensor_id: 'DS18B20_SIMULATED',
+    sensor_id: 'ESP32_MULTI_SIMULATED',
     temp_c: tempC,
     temp_f: tempF,
+    ldr_percent: ldrPercent,
+    voltage: voltage,
+    rain_percent: rainPercent,
+    rain_detected: rainDetected,
+    tilt_detected: tiltDetected,
+    tilt_status: tiltStatus,
     timestamp: new Date().toISOString(),
     wifi_rssi: Math.floor(-70 + Math.random() * 20)
   };

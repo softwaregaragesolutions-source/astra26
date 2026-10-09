@@ -25,11 +25,11 @@
     <header class="main-header">
       <div class="logo-container">
         <div class="logo-icon">
-          <i class="fa-solid fa-temperature-arrow-up"></i>
+          <i class="fa-solid fa-microchip"></i>
         </div>
         <div>
-          <h1>Astra Thermo Cloud</h1>
-          <p class="subtitle">ESP32 + DS18B20 Waterproof Sensor Live Telemetry</p>
+          <h1>Astra Telemetry Cloud</h1>
+          <p class="subtitle">ESP32 5-Sensor Telemetry Suite (Temp, LDR Light, Voltage, Rain, Tilt)</p>
         </div>
       </div>
 
@@ -60,7 +60,7 @@
         <i class="fa-solid fa-list-check"></i> Data Logs
       </button>
       <button class="tab-btn" data-tab="guide">
-        <i class="fa-solid fa-microchip"></i> ESP32 Code & Setup Guide
+        <i class="fa-solid fa-microchip"></i> ESP32 Code & Wiring
       </button>
     </nav>
 
@@ -74,7 +74,7 @@
           <!-- Gauge Card -->
           <div class="card gauge-card">
             <div class="card-header">
-              <h2><i class="fa-solid fa-droplet"></i> Waterproof Sensor Gauge</h2>
+              <h2><i class="fa-solid fa-temperature-three-quarters"></i> Waterproof Temp Sensor</h2>
               <span class="live-pill"><i class="fa-solid fa-signal"></i> REAL-TIME</span>
             </div>
             
@@ -112,42 +112,42 @@
             </div>
           </div>
 
-          <!-- Quick Stats Cards Grid -->
+          <!-- Quick Stats & Sensor Cards Grid -->
           <div class="stats-column">
             
-            <div class="card stat-card stat-current">
-              <div class="stat-icon"><i class="fa-solid fa-temperature-half"></i></div>
+            <div class="card stat-card stat-ldr">
+              <div class="stat-icon" style="color: #fbbf24;"><i class="fa-solid fa-sun"></i></div>
               <div class="stat-content">
-                <h3>Latest Reading</h3>
-                <div class="stat-value" id="statLatest">--.-</div>
-                <div class="stat-subtext" id="statSensorId">Sensor: DS18B20</div>
+                <h3>LDR Light Sensor</h3>
+                <div class="stat-value" id="statLdr">--.- %</div>
+                <div class="stat-subtext" id="statLdrStatus">GPIO 34 &bull; Daylight Level</div>
               </div>
             </div>
 
-            <div class="card stat-card stat-min">
-              <div class="stat-icon"><i class="fa-solid fa-temperature-arrow-down"></i></div>
+            <div class="card stat-card stat-voltage">
+              <div class="stat-icon" style="color: #60a5fa;"><i class="fa-solid fa-bolt-lightning"></i></div>
               <div class="stat-content">
-                <h3>Minimum Temp</h3>
-                <div class="stat-value" id="statMin">--.-</div>
-                <div class="stat-subtext" id="statMinTime">No history yet</div>
+                <h3>Voltage Monitor</h3>
+                <div class="stat-value" id="statVoltage">--.-- V</div>
+                <div class="stat-subtext" id="statVoltageStatus">GPIO 35 &bull; Supply Level</div>
               </div>
             </div>
 
-            <div class="card stat-card stat-max">
-              <div class="stat-icon"><i class="fa-solid fa-temperature-arrow-up"></i></div>
+            <div class="card stat-card stat-rain">
+              <div class="stat-icon" style="color: #38bdf8;"><i class="fa-solid fa-cloud-showers-heavy"></i></div>
               <div class="stat-content">
-                <h3>Maximum Temp</h3>
-                <div class="stat-value" id="statMax">--.-</div>
-                <div class="stat-subtext" id="statMaxTime">No history yet</div>
+                <h3>Raindrop Sensor</h3>
+                <div class="stat-value" id="statRain">--.- %</div>
+                <div class="stat-subtext" id="statRainStatus">GPIO 32 &bull; No Rain</div>
               </div>
             </div>
 
-            <div class="card stat-card stat-avg">
-              <div class="stat-icon"><i class="fa-solid fa-calculator"></i></div>
+            <div class="card stat-card stat-tilt">
+              <div class="stat-icon" style="color: #c084fc;"><i class="fa-solid fa-compass"></i></div>
               <div class="stat-content">
-                <h3>Average Temp</h3>
-                <div class="stat-value" id="statAvg">--.-</div>
-                <div class="stat-subtext" id="statCount">Based on 0 readings</div>
+                <h3>Tilt / Vibration Sensor</h3>
+                <div class="stat-value" id="statTilt">Stable</div>
+                <div class="stat-subtext" id="statTiltStatus">GPIO 25 &bull; Normal Orientation</div>
               </div>
             </div>
 
@@ -284,15 +284,18 @@
                 <tr>
                   <th>Timestamp</th>
                   <th>Sensor ID</th>
-                  <th>Temperature (°C)</th>
-                  <th>Temperature (°F)</th>
-                  <th>Wi-Fi Signal (RSSI)</th>
-                  <th>Status</th>
+                  <th>Temp (°C)</th>
+                  <th>Temp (°F)</th>
+                  <th>Light (LDR %)</th>
+                  <th>Voltage (V)</th>
+                  <th>Rain Level (%)</th>
+                  <th>Tilt Status</th>
+                  <th>Wi-Fi Signal</th>
                 </tr>
               </thead>
               <tbody id="logsTableBody">
                 <tr>
-                  <td colspan="6" class="text-center">No temperature data recorded yet.</td>
+                  <td colspan="9" class="text-center">No telemetry data recorded yet.</td>
                 </tr>
               </tbody>
             </table>
@@ -306,31 +309,37 @@
           
           <div class="card guide-card">
             <div class="card-header">
-              <h2><i class="fa-solid fa-plug"></i> Hardware Wiring Schematic</h2>
+              <h2><i class="fa-solid fa-plug"></i> Hardware Wiring Schematic (5 Sensors)</h2>
             </div>
             <div class="wiring-info">
               <div class="wiring-step">
                 <span class="step-num">1</span>
                 <div>
-                  <strong>DS18B20 Red Wire (VCC)</strong> → Connect to ESP32 <strong>3.3V or 5V</strong>.
+                  <strong>DS18B20 Temp Pin</strong> → Connect Data (Yellow) to <strong>GPIO 4</strong> + 4.7kΩ resistor to VCC.
                 </div>
               </div>
               <div class="wiring-step">
                 <span class="step-num">2</span>
                 <div>
-                  <strong>DS18B20 Black Wire (GND)</strong> → Connect to ESP32 <strong>GND</strong>.
+                  <strong>LDR Light Sensor Pin</strong> → Connect Analog Out (AO) to ESP32 <strong>GPIO 34</strong>.
                 </div>
               </div>
               <div class="wiring-step">
                 <span class="step-num">3</span>
                 <div>
-                  <strong>DS18B20 Yellow Wire (Data)</strong> → Connect to ESP32 <strong>GPIO 4</strong>.
+                  <strong>Voltage Divider Module Pin</strong> → Connect Signal Out to ESP32 <strong>GPIO 35</strong>.
                 </div>
               </div>
-              <div class="wiring-step important-step">
-                <span class="step-num"><i class="fa-solid fa-triangle-exclamation"></i></span>
+              <div class="wiring-step">
+                <span class="step-num">4</span>
                 <div>
-                  <strong>4.7kΩ Pull-up Resistor (Required)</strong>: Connect between <strong>VCC (Red)</strong> and <strong>Data (Yellow)</strong>.
+                  <strong>Raindrop Sensor Module Pin</strong> → Connect Analog Out (AO) to ESP32 <strong>GPIO 32</strong>.
+                </div>
+              </div>
+              <div class="wiring-step">
+                <span class="step-num">5</span>
+                <div>
+                  <strong>Tilt Switch Sensor Pin</strong> → Connect Digital Out (DO) to ESP32 <strong>GPIO 25</strong>.
                 </div>
               </div>
             </div>
@@ -367,12 +376,13 @@
 
             <div class="code-wrapper">
               <pre><code id="espCodeBlock">/*
- * ESP32 + DS18B20 Waterproof Temperature Sensor
+ * ESP32 + DS18B20 Waterproof Temperature Sensor (HTTP & HTTPS Cloud Compatible)
  * Automatically sends data to your Render cloud endpoint
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
@@ -405,7 +415,13 @@ void loop() {
 
   if (tempC != DEVICE_DISCONNECTED_C && WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    http.begin(SERVER_URL);
+    if (String(SERVER_URL).startsWith("https")) {
+      WiFiClientSecure client;
+      client.setInsecure();
+      http.begin(client, SERVER_URL);
+    } else {
+      http.begin(SERVER_URL);
+    }
     http.addHeader("Content-Type", "application/json");
 
     String json = "{\"temperature\":" + String(tempC, 2) + ",\"sensor_id\":\"DS18B20_ESP32\"}";

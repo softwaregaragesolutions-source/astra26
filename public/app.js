@@ -36,6 +36,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const statAvg = document.getElementById('statAvg');
   const statCount = document.getElementById('statCount');
 
+  // Multi-Sensor stat cards
+  const statLdr = document.getElementById('statLdr');
+  const statLdrStatus = document.getElementById('statLdrStatus');
+  const statVoltage = document.getElementById('statVoltage');
+  const statVoltageStatus = document.getElementById('statVoltageStatus');
+  const statRain = document.getElementById('statRain');
+  const statRainStatus = document.getElementById('statRainStatus');
+  const statTilt = document.getElementById('statTilt');
+  const statTiltStatus = document.getElementById('statTiltStatus');
+
   // Interactive controls
   const quickSimBtn = document.getElementById('quickSimBtn');
   const exportCsvBtn = document.getElementById('exportCsvBtn');
@@ -58,6 +68,31 @@ document.addEventListener('DOMContentLoaded', () => {
   const cameraFullscreenBtn = document.getElementById('cameraFullscreenBtn');
   const simCameraFrameBtn = document.getElementById('simCameraFrameBtn');
   const videoPlayerContainer = document.getElementById('videoPlayerContainer');
+
+  // Fetch initial history data over REST API immediately
+  async function fetchInitialData() {
+    try {
+      const res = await fetch('/api/temperature/history?limit=100');
+      const json = await res.json();
+      if (json && json.success && Array.isArray(json.data) && json.data.length > 0) {
+        historyData = json.data;
+        currentReading = historyData[historyData.length - 1];
+        updateUI();
+      }
+    } catch (err) {
+      console.warn('Initial REST data fetch failed:', err);
+    }
+  }
+
+  // Fetch initial REST data on load
+  fetchInitialData();
+
+  // Periodic polling fallback every 5s if socket is offline
+  setInterval(() => {
+    if (!socket || !socket.connected) {
+      fetchInitialData();
+    }
+  }, 5000);
 
   // Initialize Socket.io Connection
   initSocket();
@@ -243,7 +278,37 @@ document.addEventListener('DOMContentLoaded', () => {
       thermometerBulb.style.boxShadow = `0 0 20px ${statusColor}`;
     }
 
-    // 6. Stats Summary
+    // 6. Multi-Sensor Cards Update (LDR, Voltage, Rain, Tilt)
+    const ldrVal = currentReading.ldr_percent !== undefined ? currentReading.ldr_percent : 65.0;
+    if (statLdr) statLdr.textContent = `${ldrVal.toFixed(1)} %`;
+    if (statLdrStatus) {
+      const ldrText = ldrVal < 30 ? 'Low Light / Night' : ldrVal > 70 ? 'Bright Daylight' : 'Moderate Light';
+      statLdrStatus.textContent = `GPIO 34 • ${ldrText}`;
+    }
+
+    const voltsVal = currentReading.voltage !== undefined ? currentReading.voltage : 12.2;
+    if (statVoltage) statVoltage.textContent = `${voltsVal.toFixed(2)} V`;
+    if (statVoltageStatus) {
+      const vText = voltsVal > 13.0 ? 'Overvoltage' : voltsVal < 11.0 ? 'Low Battery Alert' : 'Normal Power';
+      statVoltageStatus.textContent = `GPIO 35 • ${vText}`;
+    }
+
+    const rainVal = currentReading.rain_percent !== undefined ? currentReading.rain_percent : 0.0;
+    const isRain = currentReading.rain_detected || rainVal > 20;
+    if (statRain) statRain.textContent = isRain ? `Raining (${rainVal.toFixed(1)}%)` : `Dry (${rainVal.toFixed(1)}%)`;
+    if (statRainStatus) {
+      statRainStatus.textContent = `GPIO 32 • ${isRain ? '🌧 Rain Detected!' : '☀️ No Rain'}`;
+      statRainStatus.style.color = isRain ? 'var(--primary)' : 'var(--text-muted)';
+    }
+
+    const tiltText = currentReading.tilt_status || (currentReading.tilt_detected ? 'Tilted Alert' : 'Stable');
+    if (statTilt) statTilt.textContent = tiltText;
+    if (statTiltStatus) {
+      statTiltStatus.textContent = `GPIO 25 • ${currentReading.tilt_detected ? '⚠️ Motion / Tilted' : 'Normal Orientation'}`;
+      statTiltStatus.style.color = currentReading.tilt_detected ? 'var(--danger)' : 'var(--text-muted)';
+    }
+
+    // 7. Stats Summary
     if (historyData.length > 0) {
       const tempArray = historyData.map(r => currentUnit === 'C' ? r.temp_c : r.temp_f);
       const minVal = Math.min(...tempArray);
@@ -263,7 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (statCount) statCount.textContent = `Based on ${historyData.length} readings`;
     }
 
-    // 7. Update Charts & Logs
+    // 8. Update Charts & Logs
     updateLiveChart();
     updateAnalyticsChart();
     renderLogsTable();
@@ -273,26 +338,45 @@ document.addEventListener('DOMContentLoaded', () => {
     const chartElem = document.getElementById('liveChart');
     if (!chartElem) return;
     const ctx = chartElem.getContext('2d');
-    
-    const gradient = ctx.createLinearGradient(0, 0, 0, 250);
-    gradient.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
-    gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
 
     liveChart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: [],
-        datasets: [{
-          label: `Temperature (°${currentUnit})`,
-          data: [],
-          borderColor: '#38bdf8',
-          borderWidth: 2,
-          backgroundColor: gradient,
-          fill: true,
-          tension: 0.3,
-          pointBackgroundColor: '#38bdf8',
-          pointRadius: 3
-        }]
+        datasets: [
+          {
+            label: `Temp (°${currentUnit})`,
+            data: [],
+            borderColor: '#38bdf8',
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 3
+          },
+          {
+            label: 'LDR Light (%)',
+            data: [],
+            borderColor: '#fbbf24',
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 2
+          },
+          {
+            label: 'Voltage (V)',
+            data: [],
+            borderColor: '#60a5fa',
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 2
+          },
+          {
+            label: 'Rain (%)',
+            data: [],
+            borderColor: '#c084fc',
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 2
+          }
+        ]
       },
       options: {
         responsive: true,
@@ -309,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         },
         plugins: {
-          legend: { display: false }
+          legend: { labels: { color: '#f3f4f6', font: { family: 'Outfit' } } }
         }
       }
     });
@@ -320,8 +404,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const slice = historyData.slice(-activeChartRange);
     
     liveChart.data.labels = slice.map(r => new Date(r.timestamp).toLocaleTimeString());
-    liveChart.data.datasets[0].label = `Temperature (°${currentUnit})`;
+    liveChart.data.datasets[0].label = `Temp (°${currentUnit})`;
     liveChart.data.datasets[0].data = slice.map(r => currentUnit === 'C' ? r.temp_c : r.temp_f);
+    liveChart.data.datasets[1].data = slice.map(r => r.ldr_percent ?? 65);
+    liveChart.data.datasets[2].data = slice.map(r => r.voltage ?? 12.2);
+    liveChart.data.datasets[3].data = slice.map(r => r.rain_percent ?? 0);
     liveChart.update();
   }
 
@@ -329,25 +416,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const chartElem = document.getElementById('analyticsChart');
     if (!chartElem) return;
     const ctx = chartElem.getContext('2d');
-    
-    const gradient = ctx.createLinearGradient(0, 0, 0, 350);
-    gradient.addColorStop(0, 'rgba(192, 132, 252, 0.4)');
-    gradient.addColorStop(1, 'rgba(192, 132, 252, 0.0)');
 
     analyticsChart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: [],
-        datasets: [{
-          label: `Historical Stream (°${currentUnit})`,
-          data: [],
-          borderColor: '#c084fc',
-          borderWidth: 2,
-          backgroundColor: gradient,
-          fill: true,
-          tension: 0.25,
-          pointRadius: 2
-        }]
+        datasets: [
+          {
+            label: `Temperature (°${currentUnit})`,
+            data: [],
+            borderColor: '#38bdf8',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.25,
+            pointRadius: 2
+          },
+          {
+            label: 'LDR Light (%)',
+            data: [],
+            borderColor: '#fbbf24',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.25,
+            pointRadius: 2
+          },
+          {
+            label: 'Voltage (V)',
+            data: [],
+            borderColor: '#60a5fa',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.25,
+            pointRadius: 2
+          }
+        ]
       },
       options: {
         responsive: true,
@@ -374,21 +476,27 @@ document.addEventListener('DOMContentLoaded', () => {
     analyticsChart.data.labels = historyData.map(r => new Date(r.timestamp).toLocaleTimeString());
     analyticsChart.data.datasets[0].label = `Historical Temperature (°${currentUnit})`;
     analyticsChart.data.datasets[0].data = historyData.map(r => currentUnit === 'C' ? r.temp_c : r.temp_f);
+    analyticsChart.data.datasets[1].data = historyData.map(r => r.ldr_percent ?? 65);
+    analyticsChart.data.datasets[2].data = historyData.map(r => r.voltage ?? 12.2);
     analyticsChart.update();
   }
 
   function renderLogsTable() {
     if (!logsTableBody) return;
     if (historyData.length === 0) {
-      logsTableBody.innerHTML = `<tr><td colspan="6" class="text-center">No temperature data recorded yet.</td></tr>`;
+      logsTableBody.innerHTML = `<tr><td colspan="9" class="text-center">No telemetry data recorded yet.</td></tr>`;
       return;
     }
 
     const recentLogs = [...historyData].reverse().slice(0, 50);
     logsTableBody.innerHTML = recentLogs.map(item => {
       const dateStr = new Date(item.timestamp).toLocaleString();
-      const statusClass = item.temp_c > 35 ? 'color: var(--danger)' : item.temp_c < 10 ? 'color: var(--primary)' : 'color: var(--success)';
-      const statusText = item.temp_c > 35 ? 'HIGH ALERT' : item.temp_c < 10 ? 'COLD' : 'NORMAL';
+      const tiltBadge = item.tilt_detected || (item.tilt_status && item.tilt_status.includes('Tilted'))
+        ? `<span style="color: var(--danger); font-weight: bold;">TILTED ALERT</span>`
+        : `<span style="color: var(--success); font-weight: bold;">Stable</span>`;
+      const ldrVal = item.ldr_percent !== undefined ? item.ldr_percent.toFixed(1) + '%' : '65.0%';
+      const voltVal = item.voltage !== undefined ? item.voltage.toFixed(2) + ' V' : '12.20 V';
+      const rainVal = item.rain_percent !== undefined ? item.rain_percent.toFixed(1) + '%' : '0.0%';
 
       return `
         <tr>
@@ -396,8 +504,11 @@ document.addEventListener('DOMContentLoaded', () => {
           <td><code>${item.sensor_id}</code></td>
           <td><strong>${item.temp_c.toFixed(2)} °C</strong></td>
           <td>${item.temp_f.toFixed(2)} °F</td>
+          <td>${ldrVal}</td>
+          <td>${voltVal}</td>
+          <td>${rainVal}</td>
+          <td>${tiltBadge}</td>
           <td>${item.wifi_rssi ? item.wifi_rssi + ' dBm' : 'N/A'}</td>
-          <td style="${statusClass}; font-weight: bold;">${statusText}</td>
         </tr>
       `;
     }).join('');
@@ -496,15 +607,19 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
         
-        let csvContent = 'data:text/csv;charset=utf-8,ID,Timestamp,SensorID,Temp_C,Temp_F,WiFi_RSSI\n';
+        let csvContent = 'data:text/csv;charset=utf-8,ID,Timestamp,SensorID,Temp_C,Temp_F,LDR_Percent,Voltage_V,Rain_Percent,Tilt_Status,WiFi_RSSI\n';
         historyData.forEach(row => {
-          csvContent += `${row.id},"${row.timestamp}",${row.sensor_id},${row.temp_c},${row.temp_f},${row.wifi_rssi || ''}\n`;
+          const ldr = row.ldr_percent !== undefined ? row.ldr_percent : 65;
+          const volts = row.voltage !== undefined ? row.voltage : 12.2;
+          const rain = row.rain_percent !== undefined ? row.rain_percent : 0;
+          const tilt = row.tilt_status || (row.tilt_detected ? 'Tilted Alert' : 'Stable');
+          csvContent += `${row.id},"${row.timestamp}",${row.sensor_id},${row.temp_c},${row.temp_f},${ldr},${volts},${rain},"${tilt}",${row.wifi_rssi || ''}\n`;
         });
 
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement('a');
         link.setAttribute('href', encodedUri);
-        link.setAttribute('download', `esp32_temperature_logs_${new Date().toISOString().slice(0,10)}.csv`);
+        link.setAttribute('download', `esp32_telemetry_logs_${new Date().toISOString().slice(0,10)}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -541,18 +656,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const espCodeBlock = document.getElementById('espCodeBlock');
 
     if (codeSelectBtnTemp && codeSelectBtnCam && espCodeBlock) {
+      const serverOrigin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'https://YOUR-APP-NAME.onrender.com';
+      const tempUrl = `${serverOrigin}/api/temperature`;
+      const camUrl = `${serverOrigin}/api/camera/frame`;
+
       codeSelectBtnTemp.addEventListener('click', () => {
         codeSelectBtnTemp.classList.add('active');
         codeSelectBtnCam.classList.remove('active');
-        espCodeBlock.textContent = `/* ESP32 Temperature Sensor Code */
+        espCodeBlock.textContent = `/* ESP32 Temperature Sensor Code (Supports HTTP & HTTPS) */
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL    = "https://astra26.onrender.com/api/temperature";
+const char* SERVER_URL    = "${tempUrl}";
 
 #define ONE_WIRE_BUS 4
 
@@ -571,9 +691,15 @@ void loop() {
   float tempC = sensors.getTempCByIndex(0);
   if (tempC != DEVICE_DISCONNECTED_C && WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    http.begin(SERVER_URL);
+    if (String(SERVER_URL).startsWith("https")) {
+      WiFiClientSecure client;
+      client.setInsecure();
+      http.begin(client, SERVER_URL);
+    } else {
+      http.begin(SERVER_URL);
+    }
     http.addHeader("Content-Type", "application/json");
-    String json = "{\"temperature\":" + String(tempC, 2) + "}";
+    String json = "{\"temperature\":" + String(tempC, 2) + ",\"sensor_id\":\"DS18B20_ESP32\"}";
     http.POST(json);
     http.end();
   }
@@ -592,7 +718,7 @@ void loop() {
 
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL    = "https://astra26.onrender.com/api/camera/frame";
+const char* SERVER_URL    = "${camUrl}";
 
 void setup() {
   Serial.begin(115200);
