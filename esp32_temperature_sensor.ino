@@ -63,7 +63,7 @@ const unsigned long SEND_INTERVAL_MS = 5000; // 5 seconds
 #define VOLTAGE_PIN       35  // Voltage Divider Sensor Analog Pin
 #define RAIN_PIN          32  // Rain Sensor Analog Pin
 #define TILT_PIN          25  // Tilt / Motion Switch Digital Pin
-#define STATUS_LED        2   // Onboard Status LED (GPIO 2, set to -1 to disable LED)
+#define STATUS_LED        -1  // Disabled (-1) to avoid GPIO 2 strapping/phy_comm conflict. Set to 13, 26, etc. if external LED is used.
 
 // Voltage Calibration Constants (Adjust for your resistor divider ratio)
 const float VOLTAGE_DIVIDER_FACTOR = 5.0; // Standard 5:1 Voltage Divider module (0-25V)
