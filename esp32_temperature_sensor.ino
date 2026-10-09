@@ -115,10 +115,16 @@ void loop() {
 }
 
 void connectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
   Serial.print("Connecting to WiFi network: ");
   Serial.println(WIFI_SSID);
 
+  WiFi.disconnect(true); // Reset Wi-Fi STA state to prevent 'cannot set config' errors
+  delay(100);
+
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int attempt = 0;
