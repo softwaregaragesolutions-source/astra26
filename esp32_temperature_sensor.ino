@@ -41,6 +41,7 @@
 #include <WiFiClientSecure.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include "esp_log.h"
 
 // ===================================================================
 //  USER CONFIGURATION - CHANGE THESE VALUES BEFORE UPLOADING
@@ -63,7 +64,7 @@ const unsigned long SEND_INTERVAL_MS = 5000; // 5 seconds
 #define VOLTAGE_PIN       35  // Voltage Divider Sensor Analog Pin
 #define RAIN_PIN          32  // Rain Sensor Analog Pin
 #define TILT_PIN          25  // Tilt / Motion Switch Digital Pin
-#define STATUS_LED        -1  // Disabled (-1) to avoid GPIO 2 strapping/phy_comm conflict. Set to 13, 26, etc. if external LED is used.
+#define STATUS_LED        -1  // Disabled (-1) to avoid GPIO 2 conflict. Set to another GPIO (e.g. 13) if using external LED.
 
 // Voltage Calibration Constants (Adjust for your resistor divider ratio)
 const float VOLTAGE_DIVIDER_FACTOR = 5.0; // Standard 5:1 Voltage Divider module (0-25V)
@@ -77,6 +78,10 @@ DallasTemperature sensors(&oneWire);
 unsigned long lastSendTime = 0;
 
 void setup() {
+  // 1. Suppress internal PHY antenna warning log
+  esp_log_level_set("phy_comm", ESP_LOG_NONE);
+  WiFi.mode(WIFI_STA);
+
   Serial.begin(115200);
   delay(1000);
   
@@ -119,16 +124,40 @@ void loop() {
 void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
-  Serial.print("Connecting to WiFi network: ");
+  Serial.print("\nConnecting to WiFi network: ");
   Serial.println(WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false); // Prevents modem sleep; essential for stable iPhone hotspot handshake
 
+  // Quick 2.4GHz pre-check to confirm iPhone hotspot is broadcasting
+  Serial.print("🔍 Checking 2.4GHz visibility for '");
+  Serial.print(WIFI_SSID);
+  Serial.println("'...");
+  int n = WiFi.scanNetworks();
+  bool ssidFound = false;
+  for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == WIFI_SSID) {
+      ssidFound = true;
+      Serial.printf("   ✅ Detected '%s' (Signal: %d dBm, Channel: %d)\n", WIFI_SSID, WiFi.RSSI(i), WiFi.channel(i));
+      break;
+    }
+  }
+
+  if (!ssidFound) {
+    Serial.printf("   ⚠️ '%s' is NOT visible in 2.4GHz!\n", WIFI_SSID);
+    Serial.println("   👉 iPhone Users: Open Settings -> Personal Hotspot -> Turn ON 'Maximize Compatibility'");
+    Serial.println("   👉 Keep the 'Personal Hotspot' screen OPEN and unlocked on your phone.");
+  }
+
+  Serial.print("Handshaking with ");
+  Serial.print(WIFI_SSID);
+  Serial.print(" ");
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int attempt = 0;
-  while (WiFi.status() != WL_CONNECTED && attempt < 40) {
+  while (WiFi.status() != WL_CONNECTED && attempt < 35) {
     delay(500);
     Serial.print(".");
     attempt++;
