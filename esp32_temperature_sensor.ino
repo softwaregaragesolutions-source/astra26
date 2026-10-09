@@ -48,8 +48,8 @@
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";         // Your Wi-Fi Name
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";     // Your Wi-Fi Password
 
-// Your deployed Render server URL (or local IP e.g. "http://192.168.1.50:3000/api/temperature")
-const char* SERVER_URL    = "https://YOUR-APP-NAME.onrender.com/api/temperature";
+// Your deployed Render server URL
+const char* SERVER_URL    = "https://astra26.onrender.com/api/temperature";
 
 // Optional API key if configured on server (leave empty "" if not using)
 const char* API_KEY       = ""; 
