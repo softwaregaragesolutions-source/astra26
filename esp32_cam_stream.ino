@@ -14,7 +14,7 @@
 // ===================================================================
 //  USER CONFIGURATION - CHANGE THESE VALUES BEFORE UPLOADING
 // ===================================================================
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+const char* WIFI_SSID     = "iPhone";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 // Your Render Cloud API endpoint
@@ -82,23 +82,34 @@ void setup() {
   Serial.println("✅ Camera Hardware Ready.");
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
   
-  while (WiFi.status() != WL_CONNECTED) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 25) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println("\n✅ WiFi Connected!");
-  Serial.print("IP Address: "); Serial.println(WiFi.localIP());
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi Connected!");
+    Serial.print("IP Address: "); Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n⚠️ WiFi not connected yet. Streamer will retry in the background.");
+  }
 }
 
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     sendFrame();
   } else {
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    delay(2000);
+    delay(3000);
   }
   delay(FRAME_INTERVAL_MS);
 }

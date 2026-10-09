@@ -2,6 +2,7 @@
  * ===================================================================
  *  ESP32 Multi-Sensor Cloud Telemetry System
  *  Sensors: DS18B20 Temp + LDR Light + Voltage + Rain + Tilt
+ *  Target Cloud: https://astra26.onrender.com/api/temperature
  * ===================================================================
  * 
  *  WIRING SCHEMATIC:
@@ -24,15 +25,14 @@
  *     - VCC           --> 3.3V / 5V
  *     - GND           --> GND
  *     - AO (Analog Out)--> GPIO 32 (ADC1_CH4)
- *     - DO (Digital Out)--> GPIO 33 (Optional)
  * 
  *  5. Tilt / Vibration Switch Sensor:
  *     - VCC           --> 3.3V
  *     - GND           --> GND
  *     - DO (Digital Out)--> GPIO 25 (INPUT_PULLUP)
  * 
- *  REQUIRED LIBRARIES:
- *  1. OneWire (by Jim Studt, Paul Stoffregen, etc.)
+ *  REQUIRED LIBRARIES (Install via Arduino Library Manager):
+ *  1. OneWire (by Paul Stoffregen)
  *  2. DallasTemperature (by Miles Burton)
  */
 
@@ -44,31 +44,32 @@
 #include "esp_log.h"
 
 // ===================================================================
-//  USER CONFIGURATION - CHANGE THESE VALUES BEFORE UPLOADING
+//  USER CONFIGURATION - VERIFY BEFORE UPLOADING
 // ===================================================================
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";         // Your Wi-Fi Name
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";     // Your Wi-Fi Password
+// Set your Wi-Fi or Personal Hotspot credentials:
+const char* WIFI_SSID     = "iPhone";                 // Your Wi-Fi / Hotspot SSID
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";     // <-- Enter your Wi-Fi / Hotspot Password here
 
-// Your deployed Render server URL
+// Render Cloud API Endpoint
 const char* SERVER_URL    = "https://astra26.onrender.com/api/temperature";
 
-// Optional API key if configured on server (leave empty "" if not using)
+// Optional API key (leave empty "" unless configured on server)
 const char* API_KEY       = ""; 
 
-// Telemetry reading send interval (in milliseconds)
+// Telemetry reading interval (in milliseconds)
 const unsigned long SEND_INTERVAL_MS = 5000; // 5 seconds
 
 // Pin Definitions
-#define ONE_WIRE_BUS      4   // DS18B20 Temp Sensor Pin
-#define LDR_PIN           34  // LDR Light Sensor Analog Pin
-#define VOLTAGE_PIN       35  // Voltage Divider Sensor Analog Pin
-#define RAIN_PIN          32  // Rain Sensor Analog Pin
-#define TILT_PIN          25  // Tilt / Motion Switch Digital Pin
-#define STATUS_LED        -1  // Disabled (-1) to avoid GPIO 2 conflict. Set to another GPIO (e.g. 13) if using external LED.
+#define ONE_WIRE_BUS      4   // DS18B20 OneWire Pin
+#define LDR_PIN           34  // LDR Light Sensor Analog Pin (ADC1_CH6)
+#define VOLTAGE_PIN       35  // Voltage Divider Sensor Analog Pin (ADC1_CH7)
+#define RAIN_PIN          32  // Rain Sensor Analog Pin (ADC1_CH4)
+#define TILT_PIN          25  // Tilt Switch Digital Pin
+#define STATUS_LED        -1  // Disabled (-1) to avoid GPIO 2 conflict. Set to 13, 26, etc. if using external LED.
 
-// Voltage Calibration Constants (Adjust for your resistor divider ratio)
-const float VOLTAGE_DIVIDER_FACTOR = 5.0; // Standard 5:1 Voltage Divider module (0-25V)
-const float ESP32_ADC_REF_VOLTS   = 3.3; // ESP32 ADC reference voltage
+// Voltage Calibration Constants (Standard 5:1 Resistor Divider: 0 - 25V)
+const float VOLTAGE_DIVIDER_FACTOR = 5.0;
+const float ESP32_ADC_REF_VOLTS   = 3.3;
 const int   ADC_RESOLUTION       = 4095;
 // ===================================================================
 
@@ -76,15 +77,20 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
 unsigned long lastSendTime = 0;
+unsigned long lastWiFiRetryTime = 0;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 10000; // Retry Wi-Fi every 10s if disconnected
 
 void setup() {
-  // 1. Suppress internal PHY antenna warning log
+  // 1. Suppress internal PHY antenna warning logs in ESP-IDF
   esp_log_level_set("phy_comm", ESP_LOG_NONE);
-  WiFi.mode(WIFI_STA);
+  esp_log_level_set("wifi", ESP_LOG_WARN);
 
   Serial.begin(115200);
   delay(1000);
-  
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false); // Prevents modem sleep; critical for iPhone/mobile hotspots
+
   if (STATUS_LED >= 0) {
     pinMode(STATUS_LED, OUTPUT);
     digitalWrite(STATUS_LED, LOW);
@@ -93,47 +99,50 @@ void setup() {
   pinMode(TILT_PIN, INPUT_PULLUP);
   analogReadResolution(12); // 12-bit ADC (0 - 4095)
 
-  Serial.println("\n-------------------------------------------");
-  Serial.println(" ESP32 Multi-Sensor Telemetry System");
-  Serial.println(" DS18B20 + LDR + Voltage + Rain + Tilt");
-  Serial.println("-------------------------------------------");
+  Serial.println("\n===========================================");
+  Serial.println("  ESP32 Multi-Sensor Telemetry System");
+  Serial.println("  Sensors: DS18B20 + LDR + Voltage + Rain + Tilt");
+  Serial.println("===========================================");
 
-  // Initialize temperature sensor
+  // Initialize DS18B20
   sensors.begin();
   int deviceCount = sensors.getDeviceCount();
-  Serial.print("Found ");
+  Serial.print("🌡️ Found ");
   Serial.print(deviceCount);
   Serial.println(" DS18B20 sensor(s) on OneWire bus.");
 
-  // Connect to Wi-Fi
-  connectWiFi();
+  // Initial Wi-Fi connection attempt
+  connectWiFiInitial();
 }
 
 void loop() {
+  unsigned long currentMillis = millis();
+
+  // Background Wi-Fi self-healing
   if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
+    if (currentMillis - lastWiFiRetryTime >= WIFI_RETRY_INTERVAL_MS) {
+      lastWiFiRetryTime = currentMillis;
+      reconnectWiFi();
+    }
   }
 
-  unsigned long currentMillis = millis();
+  // Periodic sensor read & telemetry transmit
   if (currentMillis - lastSendTime >= SEND_INTERVAL_MS) {
     lastSendTime = currentMillis;
-    sendTelemetryData();
+    processAndSendTelemetry();
   }
 }
 
-void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-
-  Serial.print("\nConnecting to WiFi network: ");
+// Initial Wi-Fi attempt during setup (with diagnostics)
+void connectWiFiInitial() {
+  Serial.print("\n📡 Connecting to WiFi: ");
   Serial.println(WIFI_SSID);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false); // Prevents modem sleep; essential for stable iPhone hotspot handshake
-
-  // Quick 2.4GHz pre-check to confirm iPhone hotspot is broadcasting
-  Serial.print("🔍 Checking 2.4GHz visibility for '");
+  // Quick 2.4GHz pre-scan to check hotspot visibility
+  Serial.print("🔍 Scanning 2.4GHz channels for '");
   Serial.print(WIFI_SSID);
   Serial.println("'...");
+
   int n = WiFi.scanNetworks();
   bool ssidFound = false;
   for (int i = 0; i < n; i++) {
@@ -145,86 +154,56 @@ void connectWiFi() {
   }
 
   if (!ssidFound) {
-    Serial.printf("   ⚠️ '%s' is NOT visible in 2.4GHz!\n", WIFI_SSID);
-    Serial.println("   👉 iPhone Users: Open Settings -> Personal Hotspot -> Turn ON 'Maximize Compatibility'");
+    Serial.printf("   ⚠️ '%s' NOT visible in 2.4GHz!\n", WIFI_SSID);
+    Serial.println("   👉 iPhone: Settings -> Personal Hotspot -> Turn ON 'Maximize Compatibility'");
     Serial.println("   👉 Keep the 'Personal Hotspot' screen OPEN and unlocked on your phone.");
   }
 
-  Serial.print("Handshaking with ");
-  Serial.print(WIFI_SSID);
-  Serial.print(" ");
-
+  Serial.print("Connecting");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempt = 0;
-  while (WiFi.status() != WL_CONNECTED && attempt < 35) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 25) {
     delay(500);
     Serial.print(".");
-    attempt++;
+    attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    if (STATUS_LED >= 0) digitalWrite(STATUS_LED, HIGH); // Solid ON when connected
+    if (STATUS_LED >= 0) digitalWrite(STATUS_LED, HIGH);
     Serial.println("\n✅ WiFi Connected Successfully!");
-    Serial.print("IP Address: ");
+    Serial.print("   IP Address: ");
     Serial.println(WiFi.localIP());
-    Serial.print("Signal Strength (RSSI): ");
-    Serial.print(WiFi.RSSI());
-    Serial.println(" dBm");
+    Serial.printf("   Signal Strength: %d dBm\n", WiFi.RSSI());
   } else {
     if (STATUS_LED >= 0) digitalWrite(STATUS_LED, LOW);
-    Serial.println("\n❌ WiFi Connection Failed!");
-
-    // Detailed diagnostic feedback
-    wl_status_t status = WiFi.status();
-    switch (status) {
-      case WL_NO_SSID_AVAIL:
-        Serial.println("   👉 Reason: SSID not found! On your iPhone, enable Settings -> Personal Hotspot -> 'Maximize Compatibility' (switches hotspot to 2.4 GHz).");
-        Serial.println("   👉 Also ensure the 'Personal Hotspot' screen remains OPEN on the iPhone while connecting.");
-        break;
-      case WL_CONNECT_FAILED:
-        Serial.println("   👉 Reason: Authentication / Handshake failed. Please verify the WiFi password.");
-        break;
-      case WL_CONNECTION_LOST:
-        Serial.println("   👉 Reason: Connection lost to access point.");
-        break;
-      case WL_DISCONNECTED:
-        Serial.println("   👉 Reason: Timed out waiting for connection / DHCP lease.");
-        break;
-      default:
-        Serial.printf("   👉 Reason: WiFi status code %d\n", (int)status);
-        break;
-    }
-
-    // Run a quick scan to help troubleshoot visible networks
-    Serial.println("\n🔍 Scanning nearby 2.4GHz Wi-Fi networks...");
-    int n = WiFi.scanNetworks();
-    if (n == 0) {
-      Serial.println("   No networks found. Ensure 2.4GHz Wi-Fi is active.");
-    } else {
-      Serial.printf("   Found %d network(s):\n", n);
-      for (int i = 0; i < n; ++i) {
-        Serial.printf("   [%d] %s (RSSI: %d dBm, Ch: %d) %s\n",
-                      i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i),
-                      (WiFi.SSID(i) == WIFI_SSID) ? "👈 [TARGET MATCH]" : "");
-      }
-    }
-    Serial.println("-------------------------------------------");
+    Serial.println("\n⚠️ WiFi not connected yet. Telemetry will continue reading sensors");
+    Serial.println("   and will automatically reconnect in the background.\n");
   }
 }
 
-void sendTelemetryData() {
+// Non-blocking background Wi-Fi reconnect
+void reconnectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  Serial.printf("🔄 Background reconnecting to '%s'...\n", WIFI_SSID);
+  WiFi.disconnect();
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+}
+
+// Read all sensors, print to Serial Monitor, and POST to Render Cloud
+void processAndSendTelemetry() {
   // 1. Read DS18B20 Waterproof Temperature Sensor
   sensors.requestTemperatures();
   float tempC = sensors.getTempCByIndex(0);
   if (tempC == DEVICE_DISCONNECTED_C || tempC < -55.0 || tempC > 125.0) {
-    tempC = 25.0; // Fallback default if disconnected
+    tempC = 25.0; // Fallback default if probe is disconnected or floating
   }
   float tempF = (tempC * 9.0 / 5.0) + 32.0;
 
   // 2. Read LDR Light Sensor (0 - 4095 ADC)
   int rawLdr = analogRead(LDR_PIN);
-  // Convert 0-4095 to Light Percentage (0% = Dark, 100% = Bright)
   float ldrPercent = ((4095 - rawLdr) / 4095.0) * 100.0;
   if (ldrPercent < 0) ldrPercent = 0;
   if (ldrPercent > 100) ldrPercent = 100;
@@ -234,43 +213,32 @@ void sendTelemetryData() {
   float pinVolts = (rawVolts / (float)ADC_RESOLUTION) * ESP32_ADC_REF_VOLTS;
   float measuredVoltage = pinVolts * VOLTAGE_DIVIDER_FACTOR;
 
-  // 4. Read Rain Sensor (0 = Wet/Raining, 4095 = Dry)
+  // 4. Read Rain Sensor (0 = Submerged, 4095 = Completely Dry)
   int rawRain = analogRead(RAIN_PIN);
   float rainPercent = ((4095 - rawRain) / 4095.0) * 100.0;
   if (rainPercent < 0) rainPercent = 0;
   if (rainPercent > 100) rainPercent = 100;
   bool rainDetected = (rainPercent > 15.0);
 
-  // 5. Read Tilt Sensor (0 = Tilted, 1 = Stable)
+  // 5. Read Tilt Sensor (0 = Tilted/Triggered, 1 = Stable)
   int tiltState = digitalRead(TILT_PIN);
   bool tiltDetected = (tiltState == LOW);
 
-  int rssi = WiFi.RSSI();
+  int rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
 
-  Serial.printf("📊 Readouts -> Temp: %.2f°C | Light: %.1f%% | Voltage: %.2fV | Rain: %.1f%% | Tilt: %s\n",
-                tempC, ldrPercent, measuredVoltage, rainPercent, tiltDetected ? "TILTED!" : "STABLE");
+  // Print live sensor readings to Serial Monitor immediately
+  Serial.printf("📊 [TELEMETRY] Temp: %.2f°C (%.1f°F) | Light: %.1f%% | Volts: %.2fV | Rain: %.1f%% | Tilt: %s | WiFi: %s\n",
+                tempC, tempF, ldrPercent, measuredVoltage, rainPercent, 
+                tiltDetected ? "TILTED!" : "STABLE",
+                (WiFi.status() == WL_CONNECTED) ? "ONLINE" : "OFFLINE");
 
+  // If Wi-Fi is not connected, skip network POST
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi disconnected. Skipping HTTP POST.");
+    Serial.println("   ⏳ Waiting for WiFi connection to upload to Render...");
     return;
   }
 
-  HTTPClient http;
-  WiFiClientSecure client;
-
-  if (String(SERVER_URL).startsWith("https")) {
-    client.setInsecure(); // Skip certificate verification for HTTPS targets like Render
-    http.begin(client, SERVER_URL);
-  } else {
-    http.begin(SERVER_URL);
-  }
-
-  http.addHeader("Content-Type", "application/json");
-  if (strlen(API_KEY) > 0) {
-    http.addHeader("x-api-key", API_KEY);
-  }
-
-  // Construct JSON Payload
+  // Construct JSON Payload for Render Webhook
   String jsonPayload = "{";
   jsonPayload += "\"temperature\":" + String(tempC, 2) + ",";
   jsonPayload += "\"temp_f\":" + String(tempF, 2) + ",";
@@ -283,11 +251,23 @@ void sendTelemetryData() {
   jsonPayload += "\"rssi\":" + String(rssi);
   jsonPayload += "}";
 
-  // Double-blink status LED (if enabled)
+  WiFiClientSecure client;
+  client.setInsecure(); // Skip certificate verification for smooth HTTPS handshake with Render
+
+  HTTPClient http;
+  http.begin(client, SERVER_URL);
+  http.setTimeout(8000); // 8-second request timeout
+  http.addHeader("Content-Type", "application/json");
+
+  if (strlen(API_KEY) > 0) {
+    http.addHeader("x-api-key", API_KEY);
+  }
+
+  // Double-blink status LED if configured
   if (STATUS_LED >= 0) {
-    digitalWrite(STATUS_LED, LOW); delay(40);
-    digitalWrite(STATUS_LED, HIGH); delay(40);
-    digitalWrite(STATUS_LED, LOW); delay(40);
+    digitalWrite(STATUS_LED, LOW); delay(30);
+    digitalWrite(STATUS_LED, HIGH); delay(30);
+    digitalWrite(STATUS_LED, LOW); delay(30);
     digitalWrite(STATUS_LED, HIGH);
   }
 
@@ -295,9 +275,9 @@ void sendTelemetryData() {
 
   if (httpResponseCode > 0) {
     String response = http.getString();
-    Serial.printf("✅ POST Response %d: %s\n", httpResponseCode, response.c_str());
+    Serial.printf("   ☁️ Render POST Success [%d]: %s\n", httpResponseCode, response.c_str());
   } else {
-    Serial.printf("❌ POST Failed: %d (%s)\n", httpResponseCode, http.errorToString(httpResponseCode).c_str());
+    Serial.printf("   ❌ Render POST Failed: %d (%s)\n", httpResponseCode, http.errorToString(httpResponseCode).c_str());
   }
 
   http.end();
