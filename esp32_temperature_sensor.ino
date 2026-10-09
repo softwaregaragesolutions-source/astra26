@@ -183,8 +183,9 @@ void sendTelemetryData() {
   }
 
   HTTPClient http;
+  WiFiClientSecure client;
+
   if (String(SERVER_URL).startsWith("https")) {
-    WiFiClientSecure client;
     client.setInsecure(); // Skip certificate verification for HTTPS targets like Render
     http.begin(client, SERVER_URL);
   } else {

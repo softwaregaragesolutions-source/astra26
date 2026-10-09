@@ -691,8 +691,8 @@ void loop() {
   float tempC = sensors.getTempCByIndex(0);
   if (tempC != DEVICE_DISCONNECTED_C && WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
+    WiFiClientSecure client;
     if (String(SERVER_URL).startsWith("https")) {
-      WiFiClientSecure client;
       client.setInsecure();
       http.begin(client, SERVER_URL);
     } else {
