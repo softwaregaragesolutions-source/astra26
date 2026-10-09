@@ -133,6 +133,8 @@ void loop() {
   }
 }
 
+#include <lwip/dns.h>
+
 // Initial Wi-Fi attempt during setup (with diagnostics)
 void connectWiFiInitial() {
   Serial.print("\n📡 Connecting to WiFi: ");
@@ -170,6 +172,13 @@ void connectWiFiInitial() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    // Configure robust Public DNS (Google 8.8.8.8 & Cloudflare 1.1.1.1) to avoid iPhone DNS dropouts
+    ip_addr_t d1, d2;
+    IP_ADDR4(&d1, 8, 8, 8, 8);
+    IP_ADDR4(&d2, 1, 1, 1, 1);
+    dns_setserver(0, &d1);
+    dns_setserver(1, &d2);
+
     if (STATUS_LED >= 0) digitalWrite(STATUS_LED, HIGH);
     Serial.println("\n✅ WiFi Connected Successfully!");
     Serial.print("   IP Address: ");
@@ -238,6 +247,14 @@ void processAndSendTelemetry() {
     return;
   }
 
+  // Pre-check DNS resolution
+  IPAddress hostIP;
+  if (!WiFi.hostByName("astra26.onrender.com", hostIP)) {
+    Serial.println("   ❌ DNS Error: Cannot resolve astra26.onrender.com.");
+    Serial.println("   👉 Check iPhone: Make sure Cellular / Mobile Data is turned ON!");
+    return;
+  }
+
   // Construct JSON Payload for Render Webhook
   String jsonPayload = "{";
   jsonPayload += "\"temperature\":" + String(tempC, 2) + ",";
@@ -253,11 +270,16 @@ void processAndSendTelemetry() {
 
   WiFiClientSecure client;
   client.setInsecure(); // Skip certificate verification for smooth HTTPS handshake with Render
+  client.setHandshakeTimeout(30);
 
   HTTPClient http;
   http.begin(client, SERVER_URL);
-  http.setTimeout(8000); // 8-second request timeout
+  http.setReuse(false);
+  http.setTimeout(12000); // 12-second timeout for mobile networks
+  http.setUserAgent("Mozilla/5.0 (ESP32)");
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("Host", "astra26.onrender.com");
+  http.addHeader("Connection", "close");
 
   if (strlen(API_KEY) > 0) {
     http.addHeader("x-api-key", API_KEY);
@@ -278,7 +300,13 @@ void processAndSendTelemetry() {
     Serial.printf("   ☁️ Render POST Success [%d]: %s\n", httpResponseCode, response.c_str());
   } else {
     Serial.printf("   ❌ Render POST Failed: %d (%s)\n", httpResponseCode, http.errorToString(httpResponseCode).c_str());
+    char lastErr[128] = {0};
+    client.lastError(lastErr, sizeof(lastErr));
+    if (strlen(lastErr) > 0) {
+      Serial.printf("   👉 TLS Socket Diagnostic: %s\n", lastErr);
+    }
   }
 
   http.end();
+  client.stop();
 }
