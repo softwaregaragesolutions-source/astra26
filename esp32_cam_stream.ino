@@ -15,7 +15,7 @@
 //  USER CONFIGURATION - CHANGE THESE VALUES BEFORE UPLOADING
 // ===================================================================
 const char* WIFI_SSID     = "iPhone";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* WIFI_PASSWORD = "00000000";
 
 // Your Render Cloud API endpoint
 const char* SERVER_URL    = "https://astra26.onrender.com/api/camera/frame";

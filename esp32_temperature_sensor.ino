@@ -48,7 +48,7 @@
 // ===================================================================
 // Set your Wi-Fi or Personal Hotspot credentials:
 const char* WIFI_SSID     = "iPhone";                 // Your Wi-Fi / Hotspot SSID
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";     // <-- Enter your Wi-Fi / Hotspot Password here
+const char* WIFI_PASSWORD = "00000000";               // Your iPhone Hotspot Password
 
 // Render Cloud API Endpoint
 const char* SERVER_URL    = "https://astra26.onrender.com/api/temperature";
