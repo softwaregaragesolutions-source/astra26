@@ -63,7 +63,7 @@ const unsigned long SEND_INTERVAL_MS = 5000; // 5 seconds
 #define VOLTAGE_PIN       35  // Voltage Divider Sensor Analog Pin
 #define RAIN_PIN          32  // Rain Sensor Analog Pin
 #define TILT_PIN          25  // Tilt / Motion Switch Digital Pin
-#define STATUS_LED        2   // Onboard Status LED
+#define STATUS_LED        2   // Onboard Status LED (GPIO 2, set to -1 to disable LED)
 
 // Voltage Calibration Constants (Adjust for your resistor divider ratio)
 const float VOLTAGE_DIVIDER_FACTOR = 5.0; // Standard 5:1 Voltage Divider module (0-25V)
@@ -80,8 +80,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  pinMode(STATUS_LED, OUTPUT);
-  digitalWrite(STATUS_LED, LOW);
+  if (STATUS_LED >= 0) {
+    pinMode(STATUS_LED, OUTPUT);
+    digitalWrite(STATUS_LED, LOW);
+  }
 
   pinMode(TILT_PIN, INPUT_PULLUP);
   analogReadResolution(12); // 12-bit ADC (0 - 4095)
@@ -120,29 +122,65 @@ void connectWiFi() {
   Serial.print("Connecting to WiFi network: ");
   Serial.println(WIFI_SSID);
 
-  WiFi.disconnect(true); // Reset Wi-Fi STA state to prevent 'cannot set config' errors
-  delay(100);
-
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false); // Prevents modem sleep; essential for stable iPhone hotspot handshake
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int attempt = 0;
-  while (WiFi.status() != WL_CONNECTED && attempt < 30) {
+  while (WiFi.status() != WL_CONNECTED && attempt < 40) {
     delay(500);
     Serial.print(".");
-    digitalWrite(STATUS_LED, !digitalRead(STATUS_LED)); // Blink while connecting
     attempt++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    digitalWrite(STATUS_LED, HIGH); // Solid ON when connected
+    if (STATUS_LED >= 0) digitalWrite(STATUS_LED, HIGH); // Solid ON when connected
     Serial.println("\n✅ WiFi Connected Successfully!");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
+    Serial.print("Signal Strength (RSSI): ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
   } else {
-    digitalWrite(STATUS_LED, LOW);
-    Serial.println("\n❌ WiFi Connection Failed! Will retry in next loop cycle.");
+    if (STATUS_LED >= 0) digitalWrite(STATUS_LED, LOW);
+    Serial.println("\n❌ WiFi Connection Failed!");
+
+    // Detailed diagnostic feedback
+    wl_status_t status = WiFi.status();
+    switch (status) {
+      case WL_NO_SSID_AVAIL:
+        Serial.println("   👉 Reason: SSID not found! On your iPhone, enable Settings -> Personal Hotspot -> 'Maximize Compatibility' (switches hotspot to 2.4 GHz).");
+        Serial.println("   👉 Also ensure the 'Personal Hotspot' screen remains OPEN on the iPhone while connecting.");
+        break;
+      case WL_CONNECT_FAILED:
+        Serial.println("   👉 Reason: Authentication / Handshake failed. Please verify the WiFi password.");
+        break;
+      case WL_CONNECTION_LOST:
+        Serial.println("   👉 Reason: Connection lost to access point.");
+        break;
+      case WL_DISCONNECTED:
+        Serial.println("   👉 Reason: Timed out waiting for connection / DHCP lease.");
+        break;
+      default:
+        Serial.printf("   👉 Reason: WiFi status code %d\n", (int)status);
+        break;
+    }
+
+    // Run a quick scan to help troubleshoot visible networks
+    Serial.println("\n🔍 Scanning nearby 2.4GHz Wi-Fi networks...");
+    int n = WiFi.scanNetworks();
+    if (n == 0) {
+      Serial.println("   No networks found. Ensure 2.4GHz Wi-Fi is active.");
+    } else {
+      Serial.printf("   Found %d network(s):\n", n);
+      for (int i = 0; i < n; ++i) {
+        Serial.printf("   [%d] %s (RSSI: %d dBm, Ch: %d) %s\n",
+                      i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i),
+                      (WiFi.SSID(i) == WIFI_SSID) ? "👈 [TARGET MATCH]" : "");
+      }
+    }
+    Serial.println("-------------------------------------------");
   }
 }
 
@@ -216,11 +254,13 @@ void sendTelemetryData() {
   jsonPayload += "\"rssi\":" + String(rssi);
   jsonPayload += "}";
 
-  // Double-blink status LED
-  digitalWrite(STATUS_LED, LOW); delay(40);
-  digitalWrite(STATUS_LED, HIGH); delay(40);
-  digitalWrite(STATUS_LED, LOW); delay(40);
-  digitalWrite(STATUS_LED, HIGH);
+  // Double-blink status LED (if enabled)
+  if (STATUS_LED >= 0) {
+    digitalWrite(STATUS_LED, LOW); delay(40);
+    digitalWrite(STATUS_LED, HIGH); delay(40);
+    digitalWrite(STATUS_LED, LOW); delay(40);
+    digitalWrite(STATUS_LED, HIGH);
+  }
 
   int httpResponseCode = http.POST(jsonPayload);
 
